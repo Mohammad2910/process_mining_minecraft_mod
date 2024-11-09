@@ -24,6 +24,8 @@ import net.minecraftforge.event.village.WandererTradesEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @Mod.EventBusSubscriber(modid = TutorialMod.MOD_ID)
@@ -123,8 +125,12 @@ public class ModEvents {
     }
 
     private static void logEvent(Player player, String action) {
+        LocalDateTime now = LocalDateTime.now();
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        String formattedTime = now.format(formatter);
+
         System.out.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-        System.out.println(player.getName().getString() + " " + action);
+        System.out.println("[" + formattedTime + "] " + player.getUUID() + ": " + player.getName().getString() + " " + action);
         System.out.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
         // Optionally, log to a file for XES format analysis
