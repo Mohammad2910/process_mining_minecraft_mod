@@ -19,17 +19,25 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.level.BlockEvent;
+import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.event.village.VillagerTradesEvent;
 import net.minecraftforge.event.village.WandererTradesEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
+import java.io.BufferedWriter;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @Mod.EventBusSubscriber(modid = TutorialMod.MOD_ID)
 public class ModEvents {
+
+    private static final String XES_FILE_PATH = "./player_events_log.xes";
 
     @SubscribeEvent
     public static void addCustomTrades(VillagerTradesEvent event) {
@@ -101,7 +109,6 @@ public class ModEvents {
     public static void onBlockBreak(BlockEvent.BreakEvent event) {
         System.out.println("/////////////////////////////////");
         System.out.println("/////////////////////////////////");
-        System.out.println("/////////////////////////////////");
 
         Player player = event.getPlayer();
         Block block = event.getState().getBlock();
@@ -124,16 +131,60 @@ public class ModEvents {
         }
     }
 
+    // Initialize the XES log file with headers if it doesn’t exist
+    static {
+        try {
+            if (!Files.exists(Paths.get(XES_FILE_PATH))) {
+                BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH));
+                writer.write("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n");
+                writer.write("<log xes.version=\"1.0\" xes.features=\"nested-attributes\">\n");
+                writer.close();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
     private static void logEvent(Player player, String action) {
         LocalDateTime now = LocalDateTime.now();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-        String formattedTime = now.format(formatter);
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS");
 
-        System.out.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-        System.out.println("[" + formattedTime + "] " + player.getUUID() + ": " + player.getName().getString() + " " + action);
-        System.out.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        String timestamp = now.format(formatter);
 
-        // Optionally, log to a file for XES format analysis
+        String playerId = player.getUUID().toString();
+        String playerName = player.getName().getString();
+
+        // Write event to the XES log file (New trace for every event)
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
+            // Start a new trace for each player (you may need more sophisticated logic to avoid duplicates)
+            writer.write("  <trace>\n");
+            writer.write("    <string key=\"concept:name\" value=\"" + playerId + "\"/>\n");
+
+            // Add an event to the trace
+            writer.write("    <event>\n");
+            writer.write("      <string key=\"concept:name\" value=\"" + action + "\"/>\n");
+            writer.write("      <string key=\"org:resource\" value=\"" + playerName + "\"/>\n");
+            writer.write("      <date key=\"time:timestamp\" value=\"" + timestamp + "\"/>\n");
+            writer.write("    </event>\n");
+            writer.write("  </trace>\n");
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @SubscribeEvent
+    public static void onServerStopping(ServerStoppingEvent event) {
+        closeXESLog();
+    }
+
+    // Call this once to close the XES file when all logging is done, adding the closing </log> tag
+    public static void closeXESLog() {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
+            writer.write("</log>");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
 }
