@@ -32,12 +32,16 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Mod.EventBusSubscriber(modid = TutorialMod.MOD_ID)
 public class ModEvents {
 
     private static final String XES_FILE_PATH = "./player_events_log.xes";
+    private static boolean isFileInitialized = false;
+    private static final Map<String, StringBuilder> playerTraces = new HashMap<>();
 
     @SubscribeEvent
     public static void addCustomTrades(VillagerTradesEvent event) {
@@ -131,46 +135,81 @@ public class ModEvents {
         }
     }
 
-    // Initialize the XES log file with headers if it doesn’t exist
     static {
+        initializeXESFile();
+    }
+    // Initialize the XES log file with headers if it doesn’t exist
+    private static void initializeXESFile() {
         try {
             if (!Files.exists(Paths.get(XES_FILE_PATH))) {
-                BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH));
-                writer.write("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n");
-                writer.write("<log xes.version=\"1.0\" xes.features=\"nested-attributes\">\n");
-                writer.close();
+                // File does not exist, so create it with the opening log tag
+                try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH))) {
+                    writer.write("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n");
+                    writer.write("<log xes.version=\"1.0\" xes.features=\"nested-attributes\">\n");
+                }
+            } else {
+                // File exists, so check for a closing </log> tag
+                List<String> lines = Files.readAllLines(Paths.get(XES_FILE_PATH));
+                if (!lines.isEmpty() && lines.get(lines.size() - 1).trim().equals("</log>")) {
+                    // Remove </log> to allow new events to be added
+                    lines.remove(lines.size() - 1);
+                    Files.write(Paths.get(XES_FILE_PATH), lines);
+                }
             }
+            isFileInitialized = true;
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
     private static void logEvent(Player player, String action) {
+//        LocalDateTime now = LocalDateTime.now();
+//        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS");
+//
+//        String timestamp = now.format(formatter);
+//
+//        String playerId = player.getUUID().toString();
+//        String playerName = player.getName().getString();
+//
+//        // Write event to the XES log file (New trace for every event)
+//        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
+//            // Start a new trace for each player (you may need more sophisticated logic to avoid duplicates)
+//            writer.write("  <trace>\n");
+//            writer.write("    <string key=\"concept:name\" value=\"" + playerId + "\"/>\n");
+//
+//            // Add an event to the trace
+//            writer.write("    <event>\n");
+//            writer.write("      <string key=\"concept:name\" value=\"" + action + "\"/>\n");
+//            writer.write("      <string key=\"org:resource\" value=\"" + playerName + "\"/>\n");
+//            writer.write("      <date key=\"time:timestamp\" value=\"" + timestamp + "\"/>\n");
+//            writer.write("    </event>\n");
+//            writer.write("  </trace>\n");
+//
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//        }
+        if (!isFileInitialized) {
+            initializeXESFile();
+        }
+
         LocalDateTime now = LocalDateTime.now();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS");
-
         String timestamp = now.format(formatter);
 
         String playerId = player.getUUID().toString();
         String playerName = player.getName().getString();
 
-        // Write event to the XES log file (New trace for every event)
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
-            // Start a new trace for each player (you may need more sophisticated logic to avoid duplicates)
-            writer.write("  <trace>\n");
-            writer.write("    <string key=\"concept:name\" value=\"" + playerId + "\"/>\n");
+        // Get or create the trace for the player
+        playerTraces.putIfAbsent(playerId, new StringBuilder()
+                .append("  <trace>\n")
+                .append("    <string key=\"concept:name\" value=\"").append(playerId).append("\"/>\n"));
 
-            // Add an event to the trace
-            writer.write("    <event>\n");
-            writer.write("      <string key=\"concept:name\" value=\"" + action + "\"/>\n");
-            writer.write("      <string key=\"org:resource\" value=\"" + playerName + "\"/>\n");
-            writer.write("      <date key=\"time:timestamp\" value=\"" + timestamp + "\"/>\n");
-            writer.write("    </event>\n");
-            writer.write("  </trace>\n");
-
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        StringBuilder trace = playerTraces.get(playerId);
+        trace.append("    <event>\n")
+                .append("      <string key=\"concept:name\" value=\"").append(action).append("\"/>\n")
+                .append("      <string key=\"org:resource\" value=\"").append(playerName).append("\"/>\n")
+                .append("      <date key=\"time:timestamp\" value=\"").append(timestamp).append("\"/>\n")
+                .append("    </event>\n");
     }
 
     @SubscribeEvent
@@ -180,11 +219,30 @@ public class ModEvents {
 
     // Call this once to close the XES file when all logging is done, adding the closing </log> tag
     public static void closeXESLog() {
+//        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
+//            writer.write("</log>");
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//        }
+
+        if (!isFileInitialized) {
+            initializeXESFile();
+        }
+
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
-            writer.write("</log>");
+            for (StringBuilder trace : playerTraces.values()) {
+                if (!trace.toString().contains("</trace>")) {
+                    trace.append("  </trace>\n");
+                }
+                writer.write(trace.toString());
+            }
+            writer.write("</log>");  // Only add </log> once at the very end
+            System.out.println("XES log file closed successfully.");
         } catch (IOException e) {
             e.printStackTrace();
         }
+
+        isFileInitialized = false;
     }
 
 }
