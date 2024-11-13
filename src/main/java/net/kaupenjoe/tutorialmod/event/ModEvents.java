@@ -17,6 +17,7 @@ import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.item.trading.MerchantOffer;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraftforge.event.entity.living.LivingDeathEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
@@ -110,16 +111,66 @@ public class ModEvents {
     }
 
     @SubscribeEvent
-    public static void onBlockBreak(BlockEvent.BreakEvent event) {
-        System.out.println("/////////////////////////////////");
-        System.out.println("/////////////////////////////////");
+    public static void onMobKilled(LivingDeathEvent event) {
+        // Add debug print
+        System.out.println("LivingDeathEvent triggered!");
 
+        if (!(event.getSource().getEntity() instanceof Player player)) {
+            System.out.println("Not killed by player, source was: " + event.getSource().getEntity());
+            return;
+        }
+
+        String entityName = event.getEntity().getName().getString();
+        System.out.println("Player " + player.getName().getString() + " killed " + entityName);
+
+        // Use new MinecraftEvent class
+        MinecraftEvent mobKillEvent = new MinecraftEvent(
+                "combat",
+                "KillMob:" + entityName,
+                player
+        );
+
+        // Add attributes
+        mobKillEvent
+                .addAttribute("combat:target", entityName)
+                .addAttribute("combat:weapon",
+                        player.getMainHandItem().isEmpty() ? "none" :
+                                player.getMainHandItem().getDisplayName().getString())
+                .addAttribute("combat:location", String.format("%.1f,%.1f,%.1f",
+                        player.getX(), player.getY(), player.getZ()))
+                .addAttribute("combat:dimension",
+                        player.level().dimension().location().toString());
+
+        // Log using EventLogger
+        EventLogger.logEvent(mobKillEvent);
+        System.out.println("Event logged successfully");
+    }
+
+
+    @SubscribeEvent
+    public static void onBlockBreak(BlockEvent.BreakEvent event) {
         Player player = event.getPlayer();
         Block block = event.getState().getBlock();
 
         // Track tree cutting
-        if (block == Blocks.JUNGLE_LOG || block == Blocks.SPRUCE_LOG || block == Blocks.BIRCH_LOG || block == Blocks.OAK_LOG) {
-            logEvent(player, "Cut down a tree");
+        if (block == Blocks.JUNGLE_LOG || block == Blocks.SPRUCE_LOG ||
+                block == Blocks.BIRCH_LOG || block == Blocks.OAK_LOG) {
+
+            MinecraftEvent treeEvent = new MinecraftEvent(
+                    "harvesting",
+                    "CutTree:" + block.getName().getString(),
+                    player
+            );
+
+            treeEvent
+                    .addAttribute("harvesting:block", block.getName().getString())
+                    .addAttribute("harvesting:tool",
+                            player.getMainHandItem().isEmpty() ? "none" :
+                                    player.getMainHandItem().getDisplayName().getString())
+                    .addAttribute("harvesting:location", String.format("%.1f,%.1f,%.1f",
+                            player.getX(), player.getY(), player.getZ()));
+
+            EventLogger.logEvent(treeEvent);
         }
     }
 
@@ -129,120 +180,33 @@ public class ModEvents {
         ItemStack craftedItem = event.getCrafting();
 
         // Track pickaxe crafting
-        if (craftedItem.getItem() == Items.WOODEN_PICKAXE || craftedItem.getItem() == Items.STONE_PICKAXE ||
-                craftedItem.getItem() == Items.IRON_PICKAXE || craftedItem.getItem() == Items.DIAMOND_PICKAXE) {
-            logEvent(player, "Crafted a pickaxe");
+        if (craftedItem.getItem() == Items.WOODEN_PICKAXE ||
+                craftedItem.getItem() == Items.STONE_PICKAXE ||
+                craftedItem.getItem() == Items.IRON_PICKAXE ||
+                craftedItem.getItem() == Items.DIAMOND_PICKAXE) {
+
+            MinecraftEvent craftEvent = new MinecraftEvent(
+                    "crafting",
+                    "CraftTool:Pickaxe",
+                    player
+            );
+
+            craftEvent
+                    .addAttribute("crafting:item", craftedItem.getDisplayName().getString())
+                    .addAttribute("crafting:material", craftedItem.getItem().toString().split("_")[0])
+                    .addAttribute("crafting:quantity", String.valueOf(craftedItem.getCount()));
+
+            EventLogger.logEvent(craftEvent);
         }
     }
 
-    static {
-        initializeXESFile();
-    }
-    // Initialize the XES log file with headers if it doesn’t exist
-    private static void initializeXESFile() {
-        try {
-            if (!Files.exists(Paths.get(XES_FILE_PATH))) {
-                // File does not exist, so create it with the opening log tag
-                try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH))) {
-                    writer.write("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n");
-                    writer.write("<log xes.version=\"1.0\" xes.features=\"nested-attributes\">\n");
-                }
-            } else {
-                // File exists, so check for a closing </log> tag
-                List<String> lines = Files.readAllLines(Paths.get(XES_FILE_PATH));
-                if (!lines.isEmpty() && lines.get(lines.size() - 1).trim().equals("</log>")) {
-                    // Remove </log> to allow new events to be added
-                    lines.remove(lines.size() - 1);
-                    Files.write(Paths.get(XES_FILE_PATH), lines);
-                }
-            }
-            isFileInitialized = true;
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private static void logEvent(Player player, String action) {
-//        LocalDateTime now = LocalDateTime.now();
-//        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS");
-//
-//        String timestamp = now.format(formatter);
-//
-//        String playerId = player.getUUID().toString();
-//        String playerName = player.getName().getString();
-//
-//        // Write event to the XES log file (New trace for every event)
-//        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
-//            // Start a new trace for each player (you may need more sophisticated logic to avoid duplicates)
-//            writer.write("  <trace>\n");
-//            writer.write("    <string key=\"concept:name\" value=\"" + playerId + "\"/>\n");
-//
-//            // Add an event to the trace
-//            writer.write("    <event>\n");
-//            writer.write("      <string key=\"concept:name\" value=\"" + action + "\"/>\n");
-//            writer.write("      <string key=\"org:resource\" value=\"" + playerName + "\"/>\n");
-//            writer.write("      <date key=\"time:timestamp\" value=\"" + timestamp + "\"/>\n");
-//            writer.write("    </event>\n");
-//            writer.write("  </trace>\n");
-//
-//        } catch (IOException e) {
-//            e.printStackTrace();
-//        }
-        if (!isFileInitialized) {
-            initializeXESFile();
-        }
-
-        LocalDateTime now = LocalDateTime.now();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS");
-        String timestamp = now.format(formatter);
-
-        String playerId = player.getUUID().toString();
-        String playerName = player.getName().getString();
-
-        // Get or create the trace for the player
-        playerTraces.putIfAbsent(playerId, new StringBuilder()
-                .append("  <trace>\n")
-                .append("    <string key=\"concept:name\" value=\"").append(playerId).append("\"/>\n"));
-
-        StringBuilder trace = playerTraces.get(playerId);
-        trace.append("    <event>\n")
-                .append("      <string key=\"concept:name\" value=\"").append(action).append("\"/>\n")
-                .append("      <string key=\"org:resource\" value=\"").append(playerName).append("\"/>\n")
-                .append("      <date key=\"time:timestamp\" value=\"").append(timestamp).append("\"/>\n")
-                .append("    </event>\n");
-    }
-
+    // Add back the ServerStopping event handler
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
-        closeXESLog();
+        System.out.println("Server stopping, closing log file...");
+        EventLogger.closeLog();
     }
 
-    // Call this once to close the XES file when all logging is done, adding the closing </log> tag
-    public static void closeXESLog() {
-//        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
-//            writer.write("</log>");
-//        } catch (IOException e) {
-//            e.printStackTrace();
-//        }
 
-        if (!isFileInitialized) {
-            initializeXESFile();
-        }
-
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
-            for (StringBuilder trace : playerTraces.values()) {
-                if (!trace.toString().contains("</trace>")) {
-                    trace.append("  </trace>\n");
-                }
-                writer.write(trace.toString());
-            }
-            writer.write("</log>");  // Only add </log> once at the very end
-            System.out.println("XES log file closed successfully.");
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        isFileInitialized = false;
-    }
 
 }
