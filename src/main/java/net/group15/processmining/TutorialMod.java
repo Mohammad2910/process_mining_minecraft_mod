@@ -1,7 +1,7 @@
-package net.group15.tutorialmod;
+package net.group15.processmining;
 
 import com.mojang.logging.LogUtils;
-import net.group15.tutorialmod.event.ModEvents;
+import net.group15.processmining.event.ModEvents;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.common.Mod;

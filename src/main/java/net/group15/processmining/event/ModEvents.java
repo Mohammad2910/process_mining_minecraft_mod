@@ -1,6 +1,6 @@
-package net.group15.tutorialmod.event;
+package net.group15.processmining.event;
 
-import net.group15.tutorialmod.TutorialMod;
+import net.group15.processmining.TutorialMod;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.*;

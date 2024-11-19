@@ -1,4 +1,4 @@
-package net.group15.tutorialmod.event;
+package net.group15.processmining.event;
 
 import org.w3c.dom.*;
 import javax.xml.parsers.*;
