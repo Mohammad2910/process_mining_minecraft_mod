@@ -48,7 +48,6 @@ public class EventLogger {
                     document = builder.newDocument();
                     rootElement = document.createElement("log");
                     rootElement.setAttribute("xes.version", "1.0");
-                    rootElement.setAttribute("xes.features", "nested-attributes");
                     document.appendChild(rootElement);
                 }
 
