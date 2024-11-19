@@ -1,88 +1,154 @@
 package net.kaupenjoe.tutorialmod.event;
 
-import java.io.BufferedWriter;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
+import org.w3c.dom.*;
+import javax.xml.parsers.*;
+import javax.xml.transform.*;
+import javax.xml.transform.dom.*;
+import javax.xml.transform.stream.*;
+import java.io.*;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
-// Main event logger class
 public class EventLogger {
     private static final String XES_FILE_PATH = "./minecraft_process_mining.xes";
-    private static boolean isFileInitialized = false;
-    private static final Map<String, StringBuilder> playerTraces = new HashMap<>();
+    private static Document document;
+    private static Element rootElement;
+    private static boolean isInitialized = false;
+    private static final Map<String, Element> traceElements = new HashMap<>();
     private static final DateTimeFormatter TIMESTAMP_FORMATTER =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS");
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+
+    private static void initializeIfNeeded() {
+        if (!isInitialized) {
+            try {
+                File file = new File(XES_FILE_PATH);
+                DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+                factory.setIgnoringElementContentWhitespace(true);
+                DocumentBuilder builder = factory.newDocumentBuilder();
+
+                if (file.exists()) {
+                    document = builder.parse(file);
+                    document.normalizeDocument();
+                    rootElement = document.getDocumentElement();
+
+                    NodeList traces = document.getElementsByTagName("trace");
+                    for (int i = 0; i < traces.getLength(); i++) {
+                        Element trace = (Element) traces.item(i);
+                        NodeList strings = trace.getElementsByTagName("string");
+                        for (int j = 0; j < strings.getLength(); j++) {
+                            Element string = (Element) strings.item(j);
+                            if ("concept:name".equals(string.getAttribute("key"))) {
+                                traceElements.put(string.getAttribute("value"), trace);
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    document = builder.newDocument();
+                    rootElement = document.createElement("log");
+                    rootElement.setAttribute("xes.version", "1.0");
+                    rootElement.setAttribute("xes.features", "nested-attributes");
+                    document.appendChild(rootElement);
+                }
+
+                isInitialized = true;
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
 
     public static void logEvent(MinecraftEvent event) {
         initializeIfNeeded();
 
-        String playerId = event.player.getUUID().toString();
-        String playerName = event.player.getName().getString();
-        String timestamp = event.timestamp.format(TIMESTAMP_FORMATTER);
+        String worldName = event.player.level().dimension().location().getPath();
+        String playerId = event.getPlayerId();
+        String traceId = worldName + "_" + playerId;
 
-        StringBuilder trace = playerTraces.computeIfAbsent(playerId, k -> createNewTrace(playerId, playerName));
-
-        appendEvent(trace, event, timestamp);
+        Element trace = traceElements.computeIfAbsent(traceId, k -> createNewTrace(traceId, event));
+        appendEvent(trace, event);
+        saveDocument();
     }
 
-    private static StringBuilder createNewTrace(String playerId, String playerName) {
-        return new StringBuilder()
-                .append("  <trace>\n")
-                .append("    <string key=\"concept:name\" value=\"").append(playerId).append("\"/>\n")
-                .append("    <string key=\"player:name\" value=\"").append(playerName).append("\"/>\n")
-                .append("    <string key=\"description\" value=\"Complete process instance for player\"/>\n");
+    private static Element createNewTrace(String traceId, MinecraftEvent event) {
+        Element trace = document.createElement("trace");
+
+        addStringElement(trace, "concept:name", traceId);
+        addStringElement(trace, "player:name", event.getPlayerName());
+        addStringElement(trace, "world:name",
+                event.player.level().dimension().location().getPath());
+        addStringElement(trace, "description", "Process instance for player in world");
+
+        rootElement.appendChild(trace);
+        return trace;
     }
 
-    private static void appendEvent(StringBuilder trace, MinecraftEvent event, String timestamp) {
-        trace.append("    <event>\n")
-                .append("      <string key=\"concept:name\" value=\"").append(event.activity).append("\"/>\n")
-                .append("      <string key=\"org:resource\" value=\"").append(event.player.getName().getString()).append("\"/>\n")
-                .append("      <date key=\"time:timestamp\" value=\"").append(timestamp).append("\"/>\n")
-                .append("      <string key=\"event:type\" value=\"").append(event.eventType).append("\"/>\n")
-                .append("      <string key=\"lifecycle:transition\" value=\"complete\"/>\n")
-                .append("      <string key=\"case:id\" value=\"").append(event.caseId).append("\"/>\n");
+    private static void appendEvent(Element trace, MinecraftEvent event) {
+        Element eventElement = document.createElement("event");
+
+        addStringElement(eventElement, "concept:name", event.activity);
+        addStringElement(eventElement, "org:resource", event.getPlayerName());
+        addStringElement(eventElement, "time:timestamp",
+                event.timestamp.format(TIMESTAMP_FORMATTER));
+        addStringElement(eventElement, "event:type", event.eventType);
+        addStringElement(eventElement, "lifecycle:transition", "complete");
+        addStringElement(eventElement, "case:id", String.valueOf(event.caseId));
 
         for (Map.Entry<String, String> attr : event.attributes.entrySet()) {
-            trace.append("      <string key=\"").append(attr.getKey())
-                    .append("\" value=\"").append(attr.getValue()).append("\"/>\n");
+            addStringElement(eventElement, attr.getKey(), attr.getValue());
         }
 
-        trace.append("    </event>\n");
+        trace.appendChild(eventElement);
     }
 
-    public static void closeLog() {
-        if (!isFileInitialized) {
-            return;
-        }
+    private static void addStringElement(Element parent, String key, String value) {
+        Element element = document.createElement("string");
+        element.setAttribute("key", key);
+        element.setAttribute("value", value);
+        parent.appendChild(element);
+    }
 
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH))) {
-            writer.write("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n");
-            writer.write("<log xes.version=\"1.0\" xes.features=\"nested-attributes\">\n");
+    private static void saveDocument() {
+        try {
+            TransformerFactory transformerFactory = TransformerFactory.newInstance();
+            Transformer transformer = transformerFactory.newTransformer();
 
-            for (StringBuilder trace : playerTraces.values()) {
-                writer.write(trace.toString());
-                writer.write("  </trace>\n");
-            }
+            // Minimize whitespace while keeping basic formatting
+            transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+            transformer.setOutputProperty(OutputKeys.METHOD, "xml");
+            transformer.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "2");
+            transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no");
+            transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
 
-            writer.write("</log>");
-            System.out.println("XES log file closed successfully.");
+            // Remove extra whitespace
+            document.normalizeDocument();
+            removeWhitespace(document.getDocumentElement());
 
-            playerTraces.clear();
-            isFileInitialized = false;
-        } catch (IOException e) {
+            DOMSource source = new DOMSource(document);
+            StreamResult result = new StreamResult(new File(XES_FILE_PATH));
+            transformer.transform(source, result);
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    private static void initializeIfNeeded() {
-        if (!isFileInitialized) {
-            isFileInitialized = true;
-            playerTraces.clear();
+    private static void removeWhitespace(Node node) {
+        NodeList children = node.getChildNodes();
+        for (int i = children.getLength() - 1; i >= 0; i--) {
+            Node child = children.item(i);
+            if (child.getNodeType() == Node.TEXT_NODE) {
+                if (child.getTextContent().trim().isEmpty()) {
+                    node.removeChild(child);
+                }
+            } else {
+                removeWhitespace(child);
+            }
         }
+    }
+
+    public static void closeLog() {
+        isInitialized = false;
+        traceElements.clear();
     }
 }
