@@ -5,19 +5,18 @@ import net.kaupenjoe.tutorialmod.TutorialMod;
 import net.kaupenjoe.tutorialmod.block.ModBlocks;
 import net.kaupenjoe.tutorialmod.item.ModItems;
 import net.kaupenjoe.tutorialmod.villager.ModVillagers;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.npc.VillagerProfession;
 import net.minecraft.world.entity.npc.VillagerTrades;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.EnchantedBookItem;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
-import net.minecraft.world.item.enchantment.EnchantmentHelper;
+import net.minecraft.world.item.*;
 import net.minecraft.world.item.enchantment.EnchantmentInstance;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.item.trading.MerchantOffer;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.*;
+import net.minecraftforge.event.entity.living.LivingDeathEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
+import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.event.village.VillagerTradesEvent;
@@ -25,13 +24,6 @@ import net.minecraftforge.event.village.WandererTradesEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
-import java.io.BufferedWriter;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -110,139 +102,239 @@ public class ModEvents {
     }
 
     @SubscribeEvent
-    public static void onBlockBreak(BlockEvent.BreakEvent event) {
-        System.out.println("/////////////////////////////////");
-        System.out.println("/////////////////////////////////");
+    public static void onMobKilled(LivingDeathEvent event) {
+        // Add debug print
+        System.out.println("LivingDeathEvent triggered!");
 
+        if (!(event.getSource().getEntity() instanceof Player player)) {
+            System.out.println("Not killed by player, source was: " + event.getSource().getEntity());
+            return;
+        }
+
+        String entityName = event.getEntity().getName().getString();
+        System.out.println("Player " + player.getName().getString() + " killed " + entityName);
+
+        // Use new MinecraftEvent class
+        MinecraftEvent mobKillEvent = new MinecraftEvent(
+                "combat",
+                "KillMob:" + entityName,
+                player
+        );
+
+        // Add attributes
+        mobKillEvent
+                .addAttribute("combat:target", entityName)
+                .addAttribute("combat:weapon",
+                        player.getMainHandItem().isEmpty() ? "none" :
+                                player.getMainHandItem().getDisplayName().getString())
+                .addAttribute("combat:location", String.format("%.1f,%.1f,%.1f",
+                        player.getX(), player.getY(), player.getZ()))
+                .addAttribute("combat:dimension",
+                        player.level().dimension().location().toString());
+
+        // Log using EventLogger
+        EventLogger.logEvent(mobKillEvent);
+        System.out.println("Event logged successfully");
+    }
+
+
+    @SubscribeEvent
+    public static void onBlockBreak(BlockEvent.BreakEvent event) {
         Player player = event.getPlayer();
         Block block = event.getState().getBlock();
+        ItemStack tool = player.getMainHandItem();
 
-        // Track tree cutting
-        if (block == Blocks.JUNGLE_LOG || block == Blocks.SPRUCE_LOG || block == Blocks.BIRCH_LOG || block == Blocks.OAK_LOG) {
-            logEvent(player, "Cut down a tree");
+        System.out.println("This is the tool item " + tool);
+        String toolType = "none";
+        if (!tool.isEmpty()) {
+            Item item = tool.getItem();
+            if (item instanceof PickaxeItem) toolType = "pickaxe";
+            else if (item instanceof AxeItem) toolType = "axe";
+            else if (item instanceof ShovelItem) toolType = "shovel";
+            else if (item instanceof HoeItem) toolType = "hoe";
+            else if (item instanceof SwordItem) toolType = "sword";
+            else toolType = "other";
         }
+
+        MinecraftEvent blockEvent = new MinecraftEvent(
+                "mining",
+                "Break:" + block.getName().getString(),
+                player
+        );
+
+        blockEvent
+                .addAttribute("mining:block", block.getName().getString())
+                .addAttribute("mining:tool_type", toolType)
+                .addAttribute("mining:tool_name", tool.isEmpty() ? "none" :
+                        tool.getDisplayName().getString())
+                .addAttribute("mining:location", String.format("%.1f,%.1f,%.1f",
+                        player.getX(), player.getY(), player.getZ()))
+                .addAttribute("mining:dimension", player.level().dimension().location().toString())
+                .addAttribute("mining:exp_drop", String.valueOf(event.getExpToDrop()))
+                .addAttribute("mining:depth", String.valueOf((int)player.getY()))
+                .addAttribute("mining:block_hardness", String.valueOf(
+                        block.defaultBlockState().getDestroySpeed(player.level(), event.getPos())))
+                .addAttribute("mining:can_harvest", String.valueOf(
+                        tool.isCorrectToolForDrops(block.defaultBlockState())));
+
+        // Add damage information for tools
+        if (!tool.isEmpty() && tool.isDamageableItem()) {
+            blockEvent
+                    .addAttribute("mining:tool_durability", String.valueOf(tool.getMaxDamage() - tool.getDamageValue()))
+                    .addAttribute("mining:tool_max_durability", String.valueOf(tool.getMaxDamage()));
+        }
+
+        EventLogger.logEvent(blockEvent);
     }
 
     @SubscribeEvent
     public static void onItemCrafted(PlayerEvent.ItemCraftedEvent event) {
         Player player = event.getEntity();
         ItemStack craftedItem = event.getCrafting();
+        Item item = craftedItem.getItem();
 
-        // Track pickaxe crafting
-        if (craftedItem.getItem() == Items.WOODEN_PICKAXE || craftedItem.getItem() == Items.STONE_PICKAXE ||
-                craftedItem.getItem() == Items.IRON_PICKAXE || craftedItem.getItem() == Items.DIAMOND_PICKAXE) {
-            logEvent(player, "Crafted a pickaxe");
+        // Determine item category based on class hierarchy
+        String category = "unknown";
+        if (item instanceof ArmorItem) category = "armor";
+        else if (item instanceof BlockItem) category = "block";
+        else if (item instanceof TieredItem) {
+            if (item instanceof SwordItem) category = "weapon";
+            else if (item instanceof PickaxeItem) category = "tool_pickaxe";
+            else if (item instanceof AxeItem) category = "tool_axe";
+            else if (item instanceof ShovelItem) category = "tool_shovel";
+            else if (item instanceof HoeItem) category = "tool_hoe";
+            else category = "tool_other";
         }
-    }
+        else if (item.isEdible()) category = "food";
 
-    static {
-        initializeXESFile();
-    }
-    // Initialize the XES log file with headers if it doesn’t exist
-    private static void initializeXESFile() {
-        try {
-            if (!Files.exists(Paths.get(XES_FILE_PATH))) {
-                // File does not exist, so create it with the opening log tag
-                try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH))) {
-                    writer.write("<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n");
-                    writer.write("<log xes.version=\"1.0\" xes.features=\"nested-attributes\">\n");
-                }
-            } else {
-                // File exists, so check for a closing </log> tag
-                List<String> lines = Files.readAllLines(Paths.get(XES_FILE_PATH));
-                if (!lines.isEmpty() && lines.get(lines.size() - 1).trim().equals("</log>")) {
-                    // Remove </log> to allow new events to be added
-                    lines.remove(lines.size() - 1);
-                    Files.write(Paths.get(XES_FILE_PATH), lines);
-                }
-            }
-            isFileInitialized = true;
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
+        MinecraftEvent craftEvent = new MinecraftEvent(
+                "crafting",
+                "Craft:" + craftedItem.getDisplayName().getString(),
+                player
+        );
 
-    private static void logEvent(Player player, String action) {
-//        LocalDateTime now = LocalDateTime.now();
-//        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS");
-//
-//        String timestamp = now.format(formatter);
-//
-//        String playerId = player.getUUID().toString();
-//        String playerName = player.getName().getString();
-//
-//        // Write event to the XES log file (New trace for every event)
-//        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
-//            // Start a new trace for each player (you may need more sophisticated logic to avoid duplicates)
-//            writer.write("  <trace>\n");
-//            writer.write("    <string key=\"concept:name\" value=\"" + playerId + "\"/>\n");
-//
-//            // Add an event to the trace
-//            writer.write("    <event>\n");
-//            writer.write("      <string key=\"concept:name\" value=\"" + action + "\"/>\n");
-//            writer.write("      <string key=\"org:resource\" value=\"" + playerName + "\"/>\n");
-//            writer.write("      <date key=\"time:timestamp\" value=\"" + timestamp + "\"/>\n");
-//            writer.write("    </event>\n");
-//            writer.write("  </trace>\n");
-//
-//        } catch (IOException e) {
-//            e.printStackTrace();
-//        }
-        if (!isFileInitialized) {
-            initializeXESFile();
+        craftEvent
+                .addAttribute("crafting:item", craftedItem.getDisplayName().getString())
+                .addAttribute("crafting:category", category)
+                .addAttribute("crafting:quantity", String.valueOf(craftedItem.getCount()))
+                .addAttribute("crafting:max_stack_size", String.valueOf(craftedItem.getMaxStackSize()))
+                .addAttribute("crafting:is_enchantable", String.valueOf(craftedItem.isEnchantable()))
+                .addAttribute("crafting:rarity", craftedItem.getRarity().toString())
+                .addAttribute("crafting:inventory_container", event.getInventory().getClass().getSimpleName());
+
+        if (craftedItem.isDamageableItem()) {
+            craftEvent.addAttribute("crafting:max_damage", String.valueOf(craftedItem.getMaxDamage()));
         }
 
-        LocalDateTime now = LocalDateTime.now();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS");
-        String timestamp = now.format(formatter);
-
-        String playerId = player.getUUID().toString();
-        String playerName = player.getName().getString();
-
-        // Get or create the trace for the player
-        playerTraces.putIfAbsent(playerId, new StringBuilder()
-                .append("  <trace>\n")
-                .append("    <string key=\"concept:name\" value=\"").append(playerId).append("\"/>\n"));
-
-        StringBuilder trace = playerTraces.get(playerId);
-        trace.append("    <event>\n")
-                .append("      <string key=\"concept:name\" value=\"").append(action).append("\"/>\n")
-                .append("      <string key=\"org:resource\" value=\"").append(playerName).append("\"/>\n")
-                .append("      <date key=\"time:timestamp\" value=\"").append(timestamp).append("\"/>\n")
-                .append("    </event>\n");
+        EventLogger.logEvent(craftEvent);
     }
 
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
-        closeXESLog();
+        System.out.println("Server stopping, closing log file...");
+        EventLogger.closeLog();
     }
 
-    // Call this once to close the XES file when all logging is done, adding the closing </log> tag
-    public static void closeXESLog() {
-//        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
-//            writer.write("</log>");
-//        } catch (IOException e) {
-//            e.printStackTrace();
-//        }
+    @SubscribeEvent
+    public static void onItemPickup(PlayerEvent.ItemPickupEvent event) {
+        Player player = event.getEntity();
+        ItemStack pickedItem = event.getStack();
+        ItemEntity originalEntity = event.getOriginalEntity();
+        Item item = pickedItem.getItem();
 
-        if (!isFileInitialized) {
-            initializeXESFile();
+        // Determine item category
+        String category = "unknown";
+        if (item instanceof ArmorItem) category = "armor";
+        else if (item instanceof BlockItem) category = "block";
+        else if (item instanceof TieredItem) {
+            if (item instanceof SwordItem) category = "weapon";
+            else if (item instanceof PickaxeItem) category = "tool_pickaxe";
+            else if (item instanceof AxeItem) category = "tool_axe";
+            else if (item instanceof ShovelItem) category = "tool_shovel";
+            else if (item instanceof HoeItem) category = "tool_hoe";
+            else category = "tool_other";
+        }
+        else if (item.isEdible()) category = "food";
+        else if (item instanceof PotionItem) category = "potion";
+        else if (item instanceof EnchantedBookItem) category = "enchanted_book";
+
+        MinecraftEvent pickupEvent = new MinecraftEvent(
+                "item_pickup",
+                "Pickup:" + pickedItem.getDisplayName().getString(),
+                player
+        );
+
+        pickupEvent
+                .addAttribute("pickup:item", pickedItem.getDisplayName().getString())
+                .addAttribute("pickup:category", category)
+                .addAttribute("pickup:quantity", String.valueOf(pickedItem.getCount()))
+                .addAttribute("pickup:location", String.format("%.1f,%.1f,%.1f",
+                        player.getX(), player.getY(), player.getZ()))
+                .addAttribute("pickup:dimension", player.level().dimension().location().toString())
+                .addAttribute("pickup:rarity", pickedItem.getRarity().toString())
+                .addAttribute("pickup:max_stack_size", String.valueOf(pickedItem.getMaxStackSize()));
+
+        // Add enchantment information if present
+        if (pickedItem.isEnchanted()) {
+            pickupEvent.addAttribute("pickup:is_enchanted", "true");
+            pickupEvent.addAttribute("pickup:enchantments",
+                    pickedItem.getEnchantmentTags().toString());
         }
 
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(XES_FILE_PATH, true))) {
-            for (StringBuilder trace : playerTraces.values()) {
-                if (!trace.toString().contains("</trace>")) {
-                    trace.append("  </trace>\n");
-                }
-                writer.write(trace.toString());
-            }
-            writer.write("</log>");  // Only add </log> once at the very end
-            System.out.println("XES log file closed successfully.");
-        } catch (IOException e) {
-            e.printStackTrace();
+        // Add durability information for tools/armor
+        if (pickedItem.isDamageableItem()) {
+            pickupEvent
+                    .addAttribute("pickup:durability", String.valueOf(pickedItem.getMaxDamage() - pickedItem.getDamageValue()))
+                    .addAttribute("pickup:max_durability", String.valueOf(pickedItem.getMaxDamage()));
         }
 
-        isFileInitialized = false;
+        EventLogger.logEvent(pickupEvent);
+    }
+
+    @SubscribeEvent
+    public static void onPlayerInteract(PlayerInteractEvent.RightClickBlock event) {
+        Player player = event.getEntity();
+        Block block = event.getLevel().getBlockState(event.getPos()).getBlock();
+        ItemStack heldItem = event.getItemStack();
+
+        // Handle bucket interactions
+        if (heldItem.getItem() instanceof BucketItem) {
+            MinecraftEvent bucketEvent = new MinecraftEvent(
+                    "interaction",
+                    "BucketUse:" + heldItem.getDisplayName().getString(),
+                    player
+            );
+
+            bucketEvent
+                    .addAttribute("interaction:item", heldItem.getDisplayName().getString())
+                    .addAttribute("interaction:location", String.format("%.1f,%.1f,%.1f",
+                            player.getX(), player.getY(), player.getZ()))
+                    .addAttribute("interaction:dimension", player.level().dimension().location().toString())
+                    .addAttribute("interaction:target_block", block.getName().getString());
+
+            EventLogger.logEvent(bucketEvent);
+        }
+
+        // Handle container interactions
+        if (block instanceof ChestBlock || block instanceof BarrelBlock ||
+                block instanceof ShulkerBoxBlock || block instanceof DispenserBlock) {
+
+            MinecraftEvent containerEvent = new MinecraftEvent(
+                    "interaction",
+                    "ContainerAccess:" + block.getName().getString(),
+                    player
+            );
+
+            containerEvent
+                    .addAttribute("interaction:container", block.getName().getString())
+                    .addAttribute("interaction:location", String.format("%.1f,%.1f,%.1f",
+                            player.getX(), player.getY(), player.getZ()))
+                    .addAttribute("interaction:dimension", player.level().dimension().location().toString())
+                    .addAttribute("interaction:held_item",
+                            heldItem.isEmpty() ? "none" : heldItem.getDisplayName().getString());
+
+            EventLogger.logEvent(containerEvent);
+        }
     }
 
 }
